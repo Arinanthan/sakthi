@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Smart Attendance Offline</title>
+<style>
+body{font-family:Arial;background:#eef2f7;padding:20px}
+h2{text-align:center}
+table{border-collapse:collapse;width:100%;background:white;margin-top:20px}
+th,td{border:1px solid #ccc;padding:8px;text-align:center}
+th{background:#1976d2;color:white}
+input,select{padding:6px;margin:5px}
+button{padding:8px 12px;margin:5px;background:#1976d2;color:white;border:none;cursor:pointer}
+#loginPage,#changePassBox,#userPanel {
+    background:#fff;
+    padding:30px 20px;
+    margin:20px auto;
+    border-radius:10px;
+    max-width:400px;
+    box-shadow:0 4px 12px rgba(0,0,0,0.1);
+}
+#loginPage {
+    padding:60px 40px;
+    position:absolute;
+    top:50%;
+    left:50%;
+    transform:translate(-50%,-50%);
+    text-align:center;
+}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="loginPage">
+<h2>Smart Attendance System</h2>
+<input id="username" placeholder="Username"><br>
+<input id="password" type="password" placeholder="Password"><br>
+<button onclick="login()">Login</button>
+<p id="loginStatus"></p>
+</div>
+
+<!-- APP -->
+<div id="app" style="display:none;">
+<button onclick="logout()" style="float:right;background:#444;">Logout</button>
+<h2>Smart Attendance</h2>
+
+<input type="date" id="date">
+<input id="shiftInchargeName" placeholder="In-Charge Name"><br>
+
+<input id="search" placeholder="Search..." onkeyup="searchEmp()"><br>
+
+<button onclick="saveAttendance()">Save</button>
+<button onclick="downloadExcel()">Download Excel</button>
+<button onclick="clearData()" id="clearBtn" style="background:red;">Clear</button>
+<button onclick="showChangePassword()">Change Password / Username</button>
+
+<!-- CHANGE PASSWORD & USERNAME -->
+<div id="changePassBox" style="display:none;">
+<input type="text" id="newUsername" placeholder="New Username">
+<input type="password" id="oldPass" placeholder="Old Password">
+<input type="password" id="newPass" placeholder="New Password">
+<button onclick="changeCredentials()">Update</button>
+</div>
+
+<!-- USER PANEL -->
+<div id="userPanel" style="display:none;">
+<h3>User Management</h3>
+<input id="newUser" placeholder="Username">
+<input id="newUserPass" placeholder="Password">
+<select id="newRole">
+<option value="sakthi">Supervisor</option>
+<option value="admin">Admin</option>
+</select>
+<button onclick="addUser()">Add</button><br>
+<input id="deleteUser" placeholder="Delete Username">
+<button onclick="deleteUser()">Delete</button>
+</div>
+
+<table id="table">
+<thead>
+<tr><th>S.No</th><th>EmpNo</th><th>Name</th><th>Role</th><th>Shift</th><th>Status</th></tr>
+</thead>
+<tbody></tbody>
+</table>
+
+<table id="pivotTable">
+<thead>
+<tr><th>Date</th><th>Shift</th><th>Role</th><th>Present</th><th>Absent</th><th>Leave</th><th>W.Off</th><th>%</th></tr>
+</thead>
+<tbody></tbody>
+</table>
+
+<script>
+// DEFAULT USERS
+let defaultUsers = {
+  admin:{password:"829937",role:"admin"},
+  sakthi:{password:"sakthi123",role:"sakthi"}
+};
+
+// GET/SET USERS
+function getUsers(){ return JSON.parse(localStorage.getItem("usersData")) || defaultUsers; }
+function saveUsers(u){ localStorage.setItem("usersData",JSON.stringify(u)); }
+
+// LOGIN
+function login(){
+  let u=document.getElementById("username").value.trim();
+  let p=document.getElementById("password").value.trim();
+  let users=getUsers();
+  if(users[u] && users[u].password===p){
+    localStorage.setItem("loggedUser",u);
+    localStorage.setItem("role",users[u].role);
+    showApp();
+  } else alert("Invalid login");
+}
+
+// LOGOUT
+function logout(){ localStorage.clear(); location.reload(); }
+
+// SHOW APP
+function showApp(){
+  document.getElementById("loginPage").style.display="none";
+  document.getElementById("app").style.display="block";
+  let role=localStorage.getItem("role");
+  if(role!=="admin") document.getElementById("userPanel").style.display="none";
+  if(role==="sakthi") document.getElementById("clearBtn").style.display="none";
+  document.getElementById("date").value = new Date().toISOString().split("T")[0];
+  loadEmployees();
+  // pre-fill username in change box
+  let loggedUser = localStorage.getItem("loggedUser");
+  if(loggedUser) document.getElementById("newUsername").value = loggedUser;
+}
+
+// CHANGE PASSWORD & USERNAME
+function showChangePassword(){ document.getElementById("changePassBox").style.display="block"; }
+function changeCredentials(){
+  let user=localStorage.getItem("loggedUser");
+  let users=getUsers();
+  let oldP=document.getElementById("oldPass").value.trim();
+  let newP=document.getElementById("newPass").value.trim();
+  let newU=document.getElementById("newUsername").value.trim();
+
+  if(users[user].password!==oldP){ alert("Wrong password"); return; }
+
+  if(newU && newU!==user){
+    users[newU]=users[user];
+    delete users[user];
+    localStorage.setItem("loggedUser", newU);
+    user=newU;
+  }
+  if(newP) users[user].password=newP;
+  saveUsers(users);
+  alert("Credentials updated");
+}
+
+// ADD/DELETE USERS
+function addUser(){
+  let users=getUsers();
+  let u=document.getElementById("newUser").value.trim();
+  let p=document.getElementById("newUserPass").value.trim();
+  let r=document.getElementById("newRole").value;
+  if(!u||!p) return alert("Fill fields");
+  users[u]={password:p,role:r};
+  saveUsers(users);
+  alert("User added");
+}
+function deleteUser(){
+  let users=getUsers();
+  let u=document.getElementById("deleteUser").value.trim();
+  if(!users[u]) return alert("Not found");
+  delete users[u];
+  saveUsers(users);
+  alert("Deleted");
+}
+
+// EMPLOYEES DATA
+let employees = [
+  { no: "662326", name: "M.SATHISHKUMAR", role: "Apprentice" },
+  { no: "707913", name: "A.SIVACHANDRAN", role: "Apprentice" },
+  { no: "710415", name: "K.DHANAKKODI", role: "Apprentice" },
+  { no: "701079", name: "P.ABINA", role: "Apprentice" },
+  { no: "700628", name: "K.PRIYADHARSHINI", role: "Apprentice" },
+  { no: "707174", name: "D.PANNEER SELVAM", role: "Apprentice" },
+  { no: "665865", name: "M.YUVARAJ", role: "Apprentice" },
+  { no: "666200", name: "S.KARTHI", role: "Apprentice" },
+  { no: "710269", name: "K.THIRUMALAI", role: "Apprentice" },
+  { no: "710258", name: "S.PRASANTH", role: "Apprentice" },
+  { no: "666357", name: "A.IBRAHIM KALEEL", role: "Apprentice" },
+  { no: "668383", name: "J.VINITHKUMAR", role: "Apprentice" },
+  { no: "702619", name: "V.NARENKUMAR", role: "Apprentice" },
+  { no: "701689", name: "T.MURUGAN", role: "Apprentice" },
+  { no: "700942", name: "V.NAVEENPRABHU", role: "Apprentice" },
+  { no: "668314", name: "R.PRABHU", role: "Apprentice" },
+  { no: "707912", name: "D.SHANMUGA SUNDARAM", role: "Apprentice" },
+  { no: "665964", name: "M.BALASUBRAMANIAN", role: "Apprentice" },
+  { no: "709679", name: "ANANDH BABU", role: "Apprentice" },
+  { no: "702943", name: "M.ARULPRAKASH", role: "Apprentice" },
+  { no: "707920", name: "V.DINESH", role: "Apprentice" },
+  { no: "668758", name: "J.SRIRAMACHANDRAN VIGNESH", role: "Apprentice" },
+  { no: "700951", name: "M.SANKAR", role: "Apprentice" },
+  { no: "710742", name: "MYTHREYAN", role: "6-Month Intern" },
+  { no: "710721", name: "C.DINESH BABU", role: "6-Month Intern" },
+  { no: "710747", name: "M.NITHINKUMAR", role: "6-Month Intern" },
+  { no: "710727", name: "S.JEEVAN", role: "6-Month Intern" },
+  { no: "710713", name: "D.BALASURYA", role: "6-Month Intern" },
+  { no: "710913", name: "ABISHEK JONE.J", role: "2-Month Intern" },
+  { no: "710930", name: "RICCO.R", role: "2-Month Intern" },
+  { no: "710912", name: "M.ABINESH", role: "2-Month Intern" },
+  { no: "710950", name: "LIBIN JOSEPH", role: "2-Month Intern" }
+];
+let tbody=document.querySelector("#table tbody");
+function loadEmployees(){
+  tbody.innerHTML="";
+  employees.forEach((e,i)=>{
+    let row=document.createElement("tr");
+    row.innerHTML=`<td>${i+1}</td><td>${e.no}</td><td>${e.name}</td><td>${e.role}</td>
+    <td><select class="shift"><option>-choose-</option><option>Morning</option><option>Afternoon</option><option>Night</option><option>Off</option></select></td>
+    <td><select class="status"><option>-choose-</option><option>Present</option><option>Absent</option><option>Leave</option><option>W.Off</option></select></td>`;
+    tbody.appendChild(row);
+  });
+}
+
+// SHIFT LOGIC
+tbody.addEventListener('change',e=>{
+  if(e.target.classList.contains('shift')){
+    let s=e.target.value;
+    let st=e.target.closest('tr').querySelector('.status');
+    st.innerHTML='';
+    if(s==="Off")["-choose-","Absent","Leave","W.Off"].forEach(x=>st.add(new Option(x,x)));
+    else if(["Morning","Afternoon","Night"].includes(s)) st.add(new Option("Present","Present"));
+    else ["-choose-","Present","Absent","Leave","W.Off"].forEach(x=>st.add(new Option(x,x)));
+  }
+});
+
+// SAVE ATTENDANCE
+function saveAttendance(){
+  let date=document.getElementById("date").value;
+  let data=[];
+  document.querySelectorAll("#table tbody tr").forEach(r=>{
+    let shift=r.cells[4].children[0].value;
+    let status=r.cells[5].children[0].value;
+    if(shift!="-choose-" && status!="-choose-") data.push({empNo:r.cells[1].innerText,role:r.cells[3].innerText,shift,status,date});
+  });
+  localStorage.setItem("attendanceData",JSON.stringify(data));
+  generatePivot(data);
+  alert("Saved");
+}
+
+// PIVOT TABLE
+function generatePivot(data){
+  let p={};
+  data.forEach(d=>{
+    let k=`${d.date}|${d.shift}|${d.role}`;
+    if(!p[k]) p[k]={Present:0,Absent:0,Leave:0,"W.Off":0};
+    p[k][d.status]++;
+  });
+  const tb=document.querySelector("#pivotTable tbody");
+  tb.innerHTML="";
+  Object.keys(p).forEach(k=>{
+    const [d,s,r]=k.split("|");
+    const x=p[k];
+    const t=(x.Present||0)+(x.Absent||0)+(x.Leave||0)+(x["W.Off"]||0);
+    const per=t?((x.Present||0)/t*100).toFixed(1):0;
+    tb.innerHTML+=`<tr><td>${d}</td><td>${s}</td><td>${r}</td><td>${x.Present||0}</td><td>${x.Absent||0}</td><td>${x.Leave||0}</td><td>${x["W.Off"]||0}</td><td>${per}%</td></tr>`;
+  });
+}
+
+// SEARCH
+function searchEmp(){
+  const v=document.getElementById("search").value.toLowerCase();
+  document.querySelectorAll("#table tbody tr").forEach(r=>{
+    r.style.display=r.cells[2].innerText.toLowerCase().includes(v)?"":"none";
+  });
+}
+
+// CLEAR
+function clearData(){
+  if(confirm("Clear all?")) localStorage.removeItem("attendanceData");
+}
+
+// DOWNLOAD EXCEL
+function downloadExcel(){
+  let data=JSON.parse(localStorage.getItem("attendanceData")||"[]");
+  if(!data.length){ alert("No data to download"); return; }
+  let csv="EmpNo,Role,Shift,Status,Date\n";
+  data.forEach(d=>{ csv+=`${d.empNo},${d.role},${d.shift},${d.status},${d.date}\n`; });
+  let blob=new Blob([csv],{type:"text/csv"});
+  let url=URL.createObjectURL(blob);
+  let a=document.createElement("a");
+  a.href=url;
+  a.download="attendance.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// LOAD
+window.onload=function(){
+  if(localStorage.getItem("loggedUser")) showApp();
+  document.getElementById("date").value=new Date().toISOString().split("T")[0];
+  let d=JSON.parse(localStorage.getItem("attendanceData")||"[]");
+  if(d.length) generatePivot(d);
+}
+</script>
+</body>
+</html>
